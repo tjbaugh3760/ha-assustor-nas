@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from homeassistant.const import CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL, Platform
+from homeassistant.const import CONF_SCAN_INTERVAL, Platform
 from homeassistant.core import HomeAssistant
 
 from .api import AsustorNasApiClient
-from .const import CONF_COMMUNITY, DEFAULT_PORT, DEFAULT_SCAN_INTERVAL
+from .const import DEFAULT_SCAN_INTERVAL
 from .coordinator import AsustorNasDataUpdateCoordinator
 from .data import AsustorNasConfigEntry, AsustorNasData
 from .repairs import async_remove_volume_migration_issue
@@ -22,12 +22,7 @@ async def async_setup_entry(
 ) -> bool:
     """Set up this integration using UI."""
     # Initialize client
-    client = AsustorNasApiClient(
-        hass=hass,
-        host=entry.data[CONF_HOST],
-        community=entry.data[CONF_COMMUNITY],
-        port=entry.data.get(CONF_PORT, DEFAULT_PORT),
-    )
+    client = AsustorNasApiClient.from_config(hass, entry.data)
 
     # Initialize coordinator
     coordinator = AsustorNasDataUpdateCoordinator(

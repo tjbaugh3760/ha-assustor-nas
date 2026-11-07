@@ -2,7 +2,26 @@
   "config": {
     "step": {
       "user": {
-        "description": "Configure your ASUSTOR NAS for SNMP monitoring.",
+        "description": "Choose the SNMP version enabled in ADM.",
+        "menu_options": {
+          "snmp_v3": "SNMPv3",
+          "snmp_v2c": "SNMPv2c"
+        }
+      },
+      "snmp_v3": {
+        "title": "SNMPv3 connection",
+        "description": "Use the SNMPv3 user configured in ADM. This mode authenticates requests without encrypting telemetry.",
+        "data": {
+          "host": "Host (IP or Hostname)",
+          "port": "SNMP Port",
+          "scan_interval": "Scan Interval (seconds)",
+          "username": "SNMP username",
+          "password": "SNMP authentication password",
+          "auth_protocol": "Authentication protocol"
+        }
+      },
+      "snmp_v2c": {
+        "title": "SNMPv2c connection",
         "data": {
           "host": "Host (IP or Hostname)",
           "port": "SNMP Port",
@@ -13,8 +32,10 @@
     },
     "error": {
       "cannot_connect": "Failed to connect to the NAS. Check host, port, and SNMP settings.",
-      "invalid_auth": "Invalid SNMP community string.",
-      "unknown": "Unexpected error occurred."
+      "invalid_auth": "SNMP rejected the credentials or authentication settings.",
+      "unknown": "Unexpected error occurred.",
+      "missing_username": "Enter the SNMP username.",
+      "short_password": "Enter an SNMP password with at least 8 characters."
     },
     "abort": {
       "already_configured": "Device is already configured."

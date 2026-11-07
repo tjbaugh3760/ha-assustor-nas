@@ -8,46 +8,51 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
-from homeassistant.const import CONF_HOST, CONF_MAC, CONF_PORT, CONF_SCAN_INTERVAL
+from homeassistant.const import CONF_HOST, CONF_MAC, CONF_PASSWORD, CONF_PORT, CONF_SCAN_INTERVAL, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import selector
 
 from ..api import AsustorNasApiClient, AsustorNasAuthenticationError, AsustorNasConnectionError
 from ..const import (
+    CONF_AUTH_PROTOCOL,
     CONF_COMMUNITY,
+    CONF_SNMP_VERSION,
     DEFAULT_COMMUNITY,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     OID_ASUSTOR_MODEL,
     OID_MAC_ADDRESS_BASE,
+    SNMP_V2C,
+    SNMP_V3,
 )
 from ..volume_identity import volume_migration_conflicts
 
 _LOGGER = logging.getLogger(__name__)
 
-STEP_USER_DATA_SCHEMA = vol.Schema(
+CONNECTION_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_HOST): str,
         vol.Optional(CONF_PORT, default=DEFAULT_PORT): int,
-        vol.Optional(CONF_COMMUNITY, default=DEFAULT_COMMUNITY): str,
         vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): int,
+    }
+)
+SNMP_V2C_SCHEMA = CONNECTION_SCHEMA.extend({vol.Optional(CONF_COMMUNITY, default=DEFAULT_COMMUNITY): str})
+SNMP_V3_SCHEMA = CONNECTION_SCHEMA.extend(
+    {
+        vol.Required(CONF_USERNAME): str,
+        vol.Required(CONF_PASSWORD): selector.TextSelector(
+            selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+        ),
+        vol.Required(CONF_AUTH_PROTOCOL, default="md5"): vol.In({"md5": "MD5", "sha": "SHA-1"}),
     }
 )
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, str]:
-    """Validate the user input allows us to connect.
-
-    Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
-    """
-    client = AsustorNasApiClient(
-        hass=hass,
-        host=data[CONF_HOST],
-        community=data[CONF_COMMUNITY],
-        port=data[CONF_PORT],
-    )
+    """Validate the same connection settings used during regular polling."""
+    client = AsustorNasApiClient.from_config(hass, data)
 
     # Test connection by fetching the NAS model
     try:
@@ -64,7 +69,9 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     # Fetch MAC addresses to use as unique ID
     try:
         mac_results = await client.async_walk_table(OID_MAC_ADDRESS_BASE)
-    except (AsustorNasAuthenticationError, AsustorNasConnectionError) as err:
+    except AsustorNasAuthenticationError as err:
+        raise InvalidAuth from err
+    except AsustorNasConnectionError as err:
         raise CannotConnect from err
 
     # Find the first valid MAC address
@@ -108,31 +115,50 @@ class HomeAssistantAsustorNASCustomConfigFlowHandler(ConfigFlow, domain=DOMAIN):
         return AsustorNasOptionsFlowHandler()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Handle the initial step."""
+        """Let the user choose how to authenticate."""
+        return self.async_show_menu(step_id="user", menu_options=["snmp_v3", "snmp_v2c"])
+
+    async def async_step_snmp_v3(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Configure an authenticated SNMPv3 connection."""
+        return await self._async_step_credentials("snmp_v3", SNMP_V3_SCHEMA, SNMP_V3, user_input)
+
+    async def async_step_snmp_v2c(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Configure an SNMPv2c connection."""
+        return await self._async_step_credentials("snmp_v2c", SNMP_V2C_SCHEMA, SNMP_V2C, user_input)
+
+    async def _async_step_credentials(
+        self, step_id: str, schema: vol.Schema, version: str, user_input: dict[str, Any] | None
+    ) -> ConfigFlowResult:
+        """Validate credentials before storing the entry."""
         errors: dict[str, str] = {}
-
         if user_input is not None:
-            try:
-                info = await validate_input(self.hass, user_input)
-            except CannotConnect as err:
-                _LOGGER.error("Connection failed: %s", err)
-                errors["base"] = "cannot_connect"
-            except InvalidAuth as err:
-                _LOGGER.error("Auth failed: %s", err)
-                errors["base"] = "invalid_auth"
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception")
-                errors["base"] = "unknown"
-            else:
-                await self.async_set_unique_id(info["mac"])
-                self._abort_if_unique_id_configured()
+            data = {**user_input, CONF_SNMP_VERSION: version}
+            if version == SNMP_V3:
+                if not data[CONF_USERNAME]:
+                    errors[CONF_USERNAME] = "missing_username"
+                if len(data[CONF_PASSWORD]) < 8:
+                    errors[CONF_PASSWORD] = "short_password"
+            if not errors:
+                try:
+                    info = await validate_input(self.hass, data)
+                except CannotConnect as err:
+                    _LOGGER.debug("Connection failed: %s", err)
+                    errors["base"] = "cannot_connect"
+                except InvalidAuth:
+                    errors["base"] = "invalid_auth"
+                except Exception:  # pylint: disable=broad-except
+                    _LOGGER.exception("Unexpected exception")
+                    errors["base"] = "unknown"
+                else:
+                    await self.async_set_unique_id(info["mac"])
+                    self._abort_if_unique_id_configured()
+                    data[CONF_MAC] = info["mac"]
+                    return self.async_create_entry(title=info["title"], data=data)
 
-                # Store the MAC address in the config entry data
-                user_input[CONF_MAC] = info["mac"]
-
-                return self.async_create_entry(title=info["title"], data=user_input)
-
-        return self.async_show_form(step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors)
+        suggestions = {key: value for key, value in (user_input or {}).items() if key != CONF_PASSWORD}
+        return self.async_show_form(
+            step_id=step_id, data_schema=self.add_suggested_values_to_schema(schema, suggestions), errors=errors
+        )
 
 
 class AsustorNasOptionsFlowHandler(OptionsFlow):

@@ -13,6 +13,10 @@ DEFAULT_COMMUNITY = "public"
 DEFAULT_SCAN_INTERVAL = 300  # 5 minutes
 
 CONF_COMMUNITY = "community"
+CONF_SNMP_VERSION = "snmp_version"
+CONF_AUTH_PROTOCOL = "auth_protocol"
+SNMP_V2C = "2c"
+SNMP_V3 = "3"
 
 # Platform parallel updates - applied to all platforms
 PARALLEL_UPDATES = 0  # 0 for async

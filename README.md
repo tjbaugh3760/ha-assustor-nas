@@ -24,7 +24,7 @@ This is an open and evolving project.
 
 ## 🌟 Features
 
-This integration connects to your ASUSTOR NAS via **SNMP v2c** to provide real-time monitoring data directly into Home Assistant.
+This integration monitors your ASUSTOR NAS from Home Assistant over SNMPv3 or SNMPv2c.
 
 - **UI Configuration**: No YAML required. Set up everything through the Home Assistant Config Flow.
 - **Dynamic Discovery**: Automatically detects and creates sensors for:
@@ -71,8 +71,8 @@ Before installing this integration, you must enable SNMP on your ASUSTOR NAS:
 1. Log in to your ASUSTOR ADM interface.
 2. Go to **Settings** > **Services** > **SNMP**.
 3. Enable the SNMP service.
-4. Set the **SNMP Protocol** to `SNMP v1 / SNMP v2c`.
-5. Note down the **Community** string (the default is usually `public`).
+4. For SNMPv3, enable **SNMP V3 service** and create a dedicated SNMP username and password. SNMPv3 uses authentication without encryption (`authNoPriv`). MD5 is the default and was verified on the AS5304T. Choose SHA-1 only if your NAS uses it.
+5. For an existing SNMPv2c installation, use the community string configured in ADM.
 
 ## 📦 Installation
 
@@ -94,10 +94,11 @@ Before installing this integration, you must enable SNMP on your ASUSTOR NAS:
 1. In Home Assistant, go to **Settings** > **Devices & Services**.
 2. Click **Add Integration** in the bottom right corner.
 3. Search for **ASUSTOR NAS**.
-4. Enter the required information:
+4. Choose **SNMPv3** or **SNMPv2c** and enter the required information:
    - **Host**: The IP address or hostname of your NAS.
    - **Port**: The SNMP port (default is `161`).
-   - **Community**: The SNMP community string you set in ADM (e.g., `public`).
+   - **SNMPv3**: Enter the username, authentication password, and authentication protocol configured in ADM.
+   - **SNMPv2c**: Enter the community string configured in ADM.
    - **Scan Interval**: How often to poll the NAS for data (default is `300` seconds).
 5. Click **Submit**.
 
@@ -111,7 +112,7 @@ When a volume has multiple possible legacy entity matches, choose the correct en
 
 This integration was built following strict Home Assistant Core standards:
 
-- **Why SNMP v2c?** It's native, lightweight, and doesn't require reverse-engineering undocumented ADM web APIs. It provides a stable and standardized way to monitor hardware.
+- **SNMP polling** uses the same connection settings for setup and regular polling. Existing entries without a protocol setting continue to use SNMPv2c.
 - **Why `pysnmp` 7.x?** Home Assistant strictly forbids blocking I/O in the main event loop. `pysnmp` 7.x is the maintained upstream package and supports modern asyncio APIs used by this integration.
 - **Unique ID Strategy**: ASUSTOR NAS devices do not expose a Serial Number via the standard `ENTITY-MIB`. To ensure a stable `unique_id` (so Home Assistant recognizes the device even if its IP changes), the integration fetches the MAC address of the first network interface via `IF-MIB`.
 - **Memory Calculation**: The ASUSTOR Enterprise MIB only exposes "Free" memory. On Linux, this value is almost zero because unused RAM is used for caching. To provide a "Memory Usage" percentage that matches the ADM web UI, we use the standard Linux `UCD-SNMP-MIB` to calculate: `Total - (Free + Buffers + Cache)`.
