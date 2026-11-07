@@ -1,5 +1,6 @@
 """Coordinator for ASUSTOR NAS SNMP integration."""
 
+from collections import Counter
 from contextlib import suppress
 from datetime import timedelta
 import logging
@@ -15,6 +16,7 @@ from ..const import (
     DOMAIN,
     OID_ASUSTOR_CPU_CORE_USAGE_BASE,
     OID_ASUSTOR_CPU_MODEL,
+    OID_ASUSTOR_DISK_ENTRY_BASE,
     OID_ASUSTOR_FAN_RPM_BASE,
     OID_ASUSTOR_MODEL,
     OID_ASUSTOR_TEMP_CPU,
@@ -56,6 +58,33 @@ def _decode_hex_string(hex_str: str) -> str:
     return hex_str
 
 
+def _process_drive_data(disk_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Correlate disk-table columns by row and identify sensors by ADM disk ID."""
+    rows: dict[str, dict[str, Any]] = {}
+    columns = {"2": "name", "6": "smart_status", "7": "temperature"}
+    prefix = f"{OID_ASUSTOR_DISK_ENTRY_BASE}."
+    for oid, value in disk_data.items():
+        if not oid.startswith(prefix):
+            continue
+        column, _, index = oid.removeprefix(prefix).partition(".")
+        if column in columns and index.isdecimal():
+            rows.setdefault(index, {})[columns[column]] = value
+
+    drives = []
+    for row in rows.values():
+        name = _decode_hex_string(str(row.get("name") or ""))
+        if not name:
+            continue
+        status = _decode_hex_string(str(row.get("smart_status") or ""))
+        drive = {"name": name, "smart_status": status or None, "temperature": None}
+        with suppress(TypeError, ValueError):
+            drive["temperature"] = int(row.get("temperature"))
+        drives.append((name.casefold(), drive))
+
+    counts = Counter(identity for identity, _ in drives)
+    return {identity: drive for identity, drive in drives if counts[identity] == 1}
+
+
 class AsustorNasDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Class to manage fetching ASUSTOR NAS data."""
 
@@ -95,14 +124,16 @@ class AsustorNasDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             fans_data = await self.client.async_walk_table(OID_ASUSTOR_FAN_RPM_BASE)
             storage_data = await self.client.async_walk_table(OID_HR_STORAGE_TABLE_BASE)
             fs_data = await self.client.async_walk_table(OID_HR_FS_TABLE_BASE)
-
-            # 3. Process and aggregate data
-            return self._process_data(static_data, cpu_cores_data, fans_data, storage_data, fs_data)
+            disk_data = await self.client.async_walk_table(OID_ASUSTOR_DISK_ENTRY_BASE)
 
         except AsustorNasAuthenticationError as exception:
             raise ConfigEntryAuthFailed(exception) from exception
         except AsustorNasConnectionError as exception:
             raise UpdateFailed(exception) from exception
+
+        processed = self._process_data(static_data, cpu_cores_data, fans_data, storage_data, fs_data)
+        processed["drives"] = _process_drive_data(disk_data)
+        return processed
 
     # Keep indexed SNMP table correlation and aggregation together so cross-table row mapping stays explicit.
     def _process_data(  # noqa: C901

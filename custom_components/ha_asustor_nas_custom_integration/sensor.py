@@ -83,6 +83,7 @@ async def async_setup_entry(
     data = coordinator.data
     registered_volume_metrics: set[tuple[str, str]] = set()
     blocked_volume_metrics: set[tuple[str, str]] = set()
+    registered_drive_metrics: set[tuple[str, str]] = set()
 
     blocked_volume_metrics.update(
         migrate_volume_entities(
@@ -152,6 +153,30 @@ async def async_setup_entry(
             new_entities.append(AsustorNasSensorEntity(coordinator, entry, description))
         return new_entities
 
+    def _build_new_drive_entities(data: dict[str, Any]) -> list[AsustorNasSensorEntity]:
+        new_entities = []
+        for drive_id, drive in data.get("drives", {}).items():
+            for metric, name, icon in (
+                ("smart_status", "SMART Status", "mdi:harddisk"),
+                ("temperature", "Temperature", "mdi:thermometer"),
+            ):
+                identity = (drive_id, metric)
+                if drive.get(metric) is None or identity in registered_drive_metrics:
+                    continue
+                is_temperature = metric == "temperature"
+                description = AsustorNasSensorEntityDescription(
+                    key=f"drive_{drive_id}_{metric}",
+                    name=f"{drive['name']} {name}",
+                    icon=icon,
+                    device_class=SensorDeviceClass.TEMPERATURE if is_temperature else None,
+                    native_unit_of_measurement=UnitOfTemperature.CELSIUS if is_temperature else None,
+                    state_class=SensorStateClass.MEASUREMENT if is_temperature else None,
+                    value_fn=lambda d, did=drive_id, field=metric: d.get("drives", {}).get(did, {}).get(field),
+                )
+                registered_drive_metrics.add(identity)
+                new_entities.append(AsustorNasSensorEntity(coordinator, entry, description))
+        return new_entities
+
     # 2. Add dynamic sensors (CPU Cores)
     for core_id in data.get("cpu_cores", {}):
         description = AsustorNasSensorEntityDescription(
@@ -200,11 +225,12 @@ async def async_setup_entry(
             continue
         entities.extend(_build_volume_entities(volume_name))
 
+    entities.extend(_build_new_drive_entities(data))
     async_add_entities(entities)
 
     @callback
-    def _async_add_missing_volume_entities() -> None:
-        new_entities: list[AsustorNasSensorEntity] = []
+    def _async_add_missing_storage_entities() -> None:
+        new_entities = _build_new_drive_entities(coordinator.data)
 
         blocked_volume_metrics.clear()
         blocked_volume_metrics.update(
@@ -227,10 +253,10 @@ async def async_setup_entry(
             new_entities.extend(_build_volume_entities(volume_name))
 
         if new_entities:
-            _LOGGER.debug("Adding %d new volume sensor entities", len(new_entities))
+            _LOGGER.debug("Adding %d new storage sensor entities", len(new_entities))
             async_add_entities(new_entities)
 
-    entry.async_on_unload(coordinator.async_add_listener(_async_add_missing_volume_entities))
+    entry.async_on_unload(coordinator.async_add_listener(_async_add_missing_storage_entities))
 
 
 class AsustorNasSensorEntity(CoordinatorEntity[AsustorNasDataUpdateCoordinator], SensorEntity):

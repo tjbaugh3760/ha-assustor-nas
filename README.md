@@ -26,6 +26,8 @@ This is an open and evolving project.
 
 This integration monitors your ASUSTOR NAS from Home Assistant over SNMPv3 or SNMPv2c.
 
+On NAS models that expose the ASUSTOR disk table, the integration creates SMART status and temperature sensors for each drive. It uses the disk ID reported by ADM to keep the sensor identity stable if the SNMP row index changes.
+
 - **UI Configuration**: No YAML required. Set up everything through the Home Assistant Config Flow.
 - **Dynamic Discovery**: Automatically detects and creates sensors for:
   - Every CPU Core (Usage %)
